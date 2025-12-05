@@ -132,6 +132,7 @@ Aplikasi memerlukan izin berbeda tergantung versi Android:
     <!-- Untuk kompatibilitas Android 10 -->
 </application>
 ```
+Bagian ini mendeklarasikan permissions dan features yang dibutuhkan aplikasi di level manifest. Permission CAMERA diperlukan untuk mengakses kamera device pada semua versi Android. Untuk storage, terdapat strategi berbeda berdasarkan SDK version dimana WRITE_EXTERNAL_STORAGE hanya berlaku hingga Android 9 (API 28), READ_EXTERNAL_STORAGE berlaku hingga Android 12L (API 32), sedangkan READ_MEDIA_IMAGES adalah permission baru untuk Android 13 ke atas yang lebih spesifik hanya untuk akses gambar. Deklarasi uses-feature memberitahu Google Play Store bahwa aplikasi memerlukan kamera, namun flash bersifat opsional sehingga aplikasi tetap bisa diinstall di device tanpa flash. Atribut requestLegacyExternalStorage pada application tag mengaktifkan mode legacy storage untuk kompatibilitas dengan Android 10 yang memperkenalkan Scoped Storage, memberikan aplikasi akses storage seperti versi Android sebelumnya.
 
 **Runtime Permission Request (Version-Specific)**
 ```kotlin
@@ -172,6 +173,7 @@ LaunchedEffect(Unit) {
     launcher.launch(permissions)
 }
 ```
+Kode ini mengimplementasikan strategi runtime permission yang adaptif terhadap versi Android yang berbeda. Menggunakan expression when dengan Build.VERSION.SDK_INT, aplikasi menentukan kombinasi permissions yang tepat untuk diminta: pada Android 13 ke atas hanya memerlukan CAMERA dan READ_MEDIA_IMAGES karena sistem sudah menggunakan granular media permissions, pada Android 10 hingga 12 menggunakan CAMERA dan READ_EXTERNAL_STORAGE karena Scoped Storage sudah diterapkan namun belum ada media permissions terpisah, sedangkan Android 9 ke bawah memerlukan ketiga permissions termasuk WRITE_EXTERNAL_STORAGE karena masih menggunakan sistem storage tradisional. Launcher dibuat menggunakan rememberLauncherForActivityResult dengan contract RequestMultiplePermissions yang mengembalikan map hasil permission request, dimana callbacknya akan memeriksa apakah CAMERA permission sudah diizinkan karena permission ini sangat diperlukan untuk fungsi aplikasi. LaunchedEffect dengan key Unit memastikan permission request dijalankan sekali saat composable pertama kali dibuat.
 
 **Permission State UI**
 ```kotlin
@@ -193,6 +195,7 @@ if (!cameraPermissionGranted) {
 // Jika izin granted, tampilkan camera preview
 CameraPreviewScreen()
 ```
+Kode ini mengatur tampilan UI berdasarkan status camera permission. Ketika camera permission belum diberikan, aplikasi menampilkan empty state yang informatif dan actionable di tengah layar menggunakan Box dengan fillMaxSize dan center alignment. Empty state terdiri dari Column yang berisi ikon kamera, text yang menjelaskan mengapa permission diperlukan, dan button yang memungkinkan user untuk trigger permission request ulang melalui launcher yang sama. Penggunaan return statement setelah blok if memastikan kode tidak melanjutkan ke CameraPreviewScreen ketika permission belum diberikan, mencegah crash atau error akibat mencoba mengakses kamera tanpa izin. Sebaliknya, jika cameraPermissionGranted bernilai true, aplikasi langsung menampilkan CameraPreviewScreen yang merupakan komponen utama untuk mengoperasikan kamera.
 
 ## MediaStore Integration
 
@@ -250,8 +253,9 @@ fun takePhoto(context: Context, imageCapture: ImageCapture, onSuccess: (Uri) -> 
     })
 }
 ```
+Strategi pertama menggunakan MediaStore API. Fungsi ini membuat timestamp unik menggunakan SimpleDateFormat untuk nama file yang unik setiap kali foto diambil. ContentValues diisi dengan metadata foto termasuk display name, MIME type image/jpeg, relative path ke folder Pictures/KameraKu, dan IS_PENDING flag diset ke 1 yang berfungsi menyembunyikan foto dari gallery selama proses penulisan berlangsung untuk mencegah aplikasi lain mengakses file yang belum complete. URI collection dibuat menggunakan VOLUME_EXTERNAL_PRIMARY yang merupakan primary external storage untuk Android 10 ke atas, menggantikan pendekatan file path yang sudah deprecated. OutputFileOptions dibuat dengan ContentResolver dan collection URI agar CameraX menulis langsung ke MediaStore tanpa perlu WRITE_EXTERNAL_STORAGE permission. Setelah foto berhasil disimpan, IS_PENDING flag diupdate menjadi 0 melalui contentResolver.update agar foto menjadi visible di gallery dan dapat diakses aplikasi lain. Jika terjadi error saat saving, fungsi otomatis fallback ke savePhotoToFile.
 
-**IS_PENDING Flag Explained**:
+**Penjelasan IS_PENDING**:
 - `IS_PENDING = 1`: File sedang ditulis, tidak visible di gallery
 - `IS_PENDING = 0`: File selesai ditulis, visible di gallery
 - Mencegah app lain membaca file yang belum selesai
@@ -303,6 +307,7 @@ fun savePhotoToFile(context: Context, imageCapture: ImageCapture, onSuccess: (Ur
     })
 }
 ```
+Strategi kedua adalah file based save berfungsi sebagai fallback jika MediaStore API gagal. Fungsi ini menggunakan Environment.getExternalStoragePublicDirectory untuk mendapatkan directory Pictures publik, kemudian membuat subdirectory KameraKu menggunakan mkdirs jika belum ada, memastikan struktur folder tersedia sebelum menyimpan file. File object dibuat dengan path lengkap dan dijadikan OutputFileOptions untuk CameraX menulis foto langsung ke file system tanpa melalui MediaStore. Setelah foto berhasil ditulis ke file, fungsi melakukan insert manual ke MediaStore dengan ContentValues yang berisi absolute path file, display name, dan MIME type, sehingga foto menjadi visible di gallery meskipun disimpan dengan cara legacy. URI yang dikembalikan adalah hasil insert ke MediaStore atau jika gagal menggunakan Uri.fromFile sebagai fallback terakhir, memastikan aplikasi selalu mendapat valid URI untuk foto yang tersimpan. Pendekatan ini memerlukan WRITE_EXTERNAL_STORAGE permission untuk Android 9 ke bawah.
 
 #### Keuntungan Dual Strategy:
 - ✅ **Android 10+**: Tidak perlu `WRITE_EXTERNAL_STORAGE`, Scoped Storage compliant
@@ -357,6 +362,7 @@ fun getAllPhotos(): List<PhotoItem> {
     return photos
 }
 ```
+Primary query menggunakan DISPLAY_NAME sebagai filter. Projection array menentukan kolom yang akan diambil yaitu ID untuk unique identifier, DISPLAY_NAME untuk nama file, dan DATE_TAKEN untuk sorting berdasarkan waktu pengambilan foto. Selection clause menggunakan LIKE operator dengan pattern "KameraKu_%" yang berarti semua nama file yang dimulai dengan prefix KameraKu_ akan terquery, memastikan hanya foto dari aplikasi ini yang muncul tanpa tercampur foto lain. Sort order menggunakan DATE_TAKEN DESC untuk menampilkan foto terbaru di urutan paling atas. Cursor diproses dalam use block untuk automatic resource cleanup, dimana setiap row diiterasi dengan moveToNext hingga mencapai limit 100 foto untuk menghindari memory issues pada device dengan banyak foto. ContentUris.withAppendedId digunakan untuk membuat content URI lengkap dari ID foto yang bisa digunakan untuk loading image atau operasi lain.
 
 #### Fallback Query (Android 10+ Only)
 
@@ -370,6 +376,7 @@ if (photos.isEmpty() && Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
     // ... same query logic
 }
 ```
+Fallback query dijalankan jika primary query tidak menghasilkan foto apapun dan device menjalankan Android 10 atau lebih tinggi. Query menggunakan RELATIVE_PATH column yang merupakan fitur baru di Android 10 untuk mencari foto berdasarkan folder path relatif Pictures/KameraKu. Pattern "%Pictures/KameraKu%" dengan wildcard di awal dan akhir memastikan path akan sesuai meskipun ada variasi seperti "/storage/emulated/0/Pictures/KameraKu" atau path lain yang mengandung substring tersebut. Fallback berguna jika foto disimpan dengan cara lain yang tidak menggunakan naming convention KameraKu_ atau jika ada inkonsistensi dalam metadata DISPLAY_NAME. Dengan kombinasi primary dan fallback query, aplikasi memiliki double safety net untuk menemukan semua foto yang pernah disimpan.
 
 ### Menghapus Foto dari MediaStore
 
@@ -396,6 +403,7 @@ refreshTrigger++  // Auto-refresh gallery after delete
 
 Toast.makeText(context, "${selectedPhotos.size} foto dihapus", Toast.LENGTH_SHORT).show()
 ```
+Proses delete mengiterasi setiap photo ID yang dipilih user dan menggunakan ContentUris.withAppendedId untuk membuat URI spesifik untuk setiap foto dari ID nya. ContentResolver.delete dipanggil dengan URI untuk menghapus foto dari MediaStore, operasi ini menghapus file fisik foto dari storage pada Android 10 ke atas karena MediaStore mengelola lifecycle file secara otomatis. Try-catch block membungkus operasi delete untuk menangani error seperti permission issues atau file sudah terhapus. Setelah semua foto terhapus, state variables direset dimana showDeleteDialog diset false untuk menutup confirmation dialog, isSelectionMode dimatikan untuk kembali ke normal browsing mode, dan selectedPhotos dikosongkan. RefreshTrigger diincrement untuk trigger recomposition dan refresh gallery list, memastikan UI langsung update menampilkan foto yang tersisa tanpa perlu manual refresh dari user. Toast notification ditampilkan dengan jumlah foto yang berhasil dihapus untuk memberikan feedback yang clear kepada user bahwa operasi delete telah selesai.
 
 ## Rotasi dan Orientasi
 
@@ -434,6 +442,7 @@ DisposableEffect(Unit) {
     }
 }
 ```
+OrientationEventListener diwrap dalam remember block agar instance listener tidak dibuat ulang setiap recomposition. Callback onOrientationChanged dipanggil setiap kali device orientation berubah dengan parameter orientation dalam derajat 0-360, check ORIENTATION_UNKNOWN dilakukan untuk mengabaikan nilai yang tidak valid ketika sensor tidak dapat menentukan orientasi. When expression melakukan mapping dari continuous degree values ke discrete Surface.ROTATION constants dengan range checking, misalnya 45-134 derajat dianggap landscape kiri dengan ROTATION_270, memastikan hanya ada 4 kemungkinan rotation state yang clear dan tidak ambiguous. Target rotation dari ImageCapture object langsung diupdate tanpa delay, sehingga foto berikutnya yang diambil akan memiliki orientasi yang benar sesuai posisi device saat memfoto. DisposableEffect dengan key Unit memastikan listener dienable hanya sekali saat composable pertama kali muncul dan didisable saat composable didestroy melalui onDispose callback.
 
 #### Set Target Rotation saat Camera Init
 
@@ -449,6 +458,7 @@ val newImageCapture = ImageCapture.Builder()
 imageCapture = newImageCapture
 newImageCapture.targetRotation = view.display.rotation
 ```
+ImageCapture object dibuat menggunakan builder pattern dengan konfigurasi capture mode MINIMIZE_LATENCY untuk mengurangi delay saat mengambil foto dan meningkatkan responsiveness shutter button. Flash mode diset sesuai preferensi user yang sudah tersimpan dalam state flashMode yaitu flash on, off, atau auto. Target rotation initial diset menggunakan view.display.rotation yang memberikan current display rotation saat camera pertama kali diinisialisasi, memastikan foto pertama sudah memiliki orientasi yang benar sesuai posisi device. Setelah ImageCapture object selesai dibuild, reference disimpan ke variable imageCapture untuk digunakan OrientationEventListener, kemudian target rotation diupdate untuk double check bahwa rotation state sudah sinkron dengan display. Pendekatan ini mengkombinasikan initial static rotation dengan dynamic rotation updates dari OrientationEventListener, menciptakan sistem orientasi dimana foto selalu tersimpan dengan EXIF orientation metadata yang benar, sehingga gallery apps dapat menampilkan foto dengan orientasi yang benar tanpa manual rotation dari user.
 
 ### Cara Kerja Auto-Rotation
 
@@ -484,6 +494,7 @@ EXIF metadata menyimpan orientasi info
 // Tidak perlu manual processing
 implementation("androidx.exifinterface:exifinterface:1.3.7")
 ```
+CameraX secara otomatis menambahkan informasi rotasi (orientation) ke dalam metadata EXIF pada foto yang diambil. Jadi tidak perlu lagi mengatur rotasi gambar secara manual saat menampilkan atau memproses foto.
 
 #### 3. **Image Loading dengan Auto-Rotate**
 ```kotlin
@@ -498,6 +509,7 @@ AsyncImage(
     contentScale = ContentScale.Crop
 )
 ```
+Kode ini menggunakan library Coil untuk menampilkan gambar dengan AsyncImage. Coil otomatis membaca data EXIF dari gambar dan menyesuaikan rotasinya saat ditampilkan, sehingga foto tidak akan terlihat miring. photoUri digunakan sebagai sumber gambar, crossfade(true) memberi efek transisi halus, size(300) mengatur ukuran thumbnail, dan contentScale = ContentScale.Crop memastikan gambar memenuhi area tampilan dengan proporsional.
 
 #### 4. **Portrait & Landscape Support**
 - **Portrait Normal (0°)**: HP tegak, foto portrait
@@ -539,16 +551,16 @@ AsyncImage(
 1. **Long press** pada foto di galeri
 2. **Selection mode aktif** - Checkbox muncul di semua foto
 3. **Tap foto** untuk select/deselect (bisa pilih banyak foto)
-4. **Select All** dengan tombol (☑️) di toolbar untuk pilih semua
-5. **Delete** dengan tombol (🗑️) di toolbar
+4. **Select All** dengan tombol pilih semua di toolbar untuk pilih semua
+5. **Delete** dengan tombol tempat sampah di toolbar
 6. **Konfirmasi** akan muncul menanyakan apakah yakin menghapus
 7. **Tap "Hapus"** untuk menghapus atau "Batal" untuk membatalkan
 8. **Toast notification** menunjukkan berapa foto yang dihapus
 9. **Gallery auto-refresh** setelah delete
 
 **Visual Feedback**:
-- Selected foto: Border biru + overlay biru terang + ✅ checkbox
-- Not selected: Overlay hitam gelap + ⭕ checkbox kosong
+- Selected foto: Border biru + overlay biru terang + checkbox aktif
+- Not selected: Overlay hitam gelap + checkbox kosong
 - Delete button: Merah saat ada foto terpilih, abu-abu saat kosong
 
 ### Menggunakan Auto-Rotate
