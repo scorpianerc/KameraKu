@@ -635,6 +635,7 @@ KameraKu_20231204_143022.jpg
 ---
 ## Developer
 
+SCORPIAN ERICKDA - 225150200111061
 Developed with using Android Studio and Jetpack Compose
 
 ---
