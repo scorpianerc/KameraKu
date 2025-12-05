@@ -636,10 +636,11 @@ KameraKu_20231204_143022.jpg
 ## Developer
 
 SCORPIAN ERICKDA - 225150200111061
+
 Developed with using Android Studio and Jetpack Compose
 
 ---
 
-**Version**: 1.0 (Optimized)  
+**Version**: 1.0  
 **Min SDK**: 24 (Android 7.0 Nougat)  
 **Target SDK**: 36
